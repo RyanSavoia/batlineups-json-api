@@ -1,3 +1,22 @@
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from playwright.async_api import async_playwright
+import asyncio
+import re
+from typing import Dict, List, Optional
+from datetime import datetime
+
+app = FastAPI()
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://www.thebettinginsider.com", "http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["GET"],
+    allow_headers=["*"],
+)
+
 async def scrape_swish_lineups():
     """Scrape today's MLB lineups from Swish Analytics"""
     async with async_playwright() as p:
@@ -149,216 +168,6 @@ async def scrape_swish_lineups():
             
             await browser.close()
             return lineups
-            
-        except Exception as e:
-            await browser.close()
-            raise efrom fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from playwright.async_api import async_playwright
-import asyncio
-import re
-from typing import Dict, List, Optional
-from datetime import datetime
-
-app = FastAPI()
-
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["https://www.thebettinginsider.com", "http://localhost:3000"],  # Add localhost for testing
-    allow_credentials=True,
-    allow_methods=["GET"],
-    allow_headers=["*"],
-)
-
-async def scrape_swish_lineups():
-    """Scrape today's MLB lineups from Swish Analytics"""
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            args=['--no-sandbox', '--disable-setuid-sandbox']
-        )
-        page = await browser.new_page()
-        
-        try:
-            await page.goto("https://swishanalytics.com/optimus/mlb/lineups", timeout=60000)
-            await page.wait_for_timeout(5000)  # Let page fully load
-            
-            # First, let's see what we're getting
-            page_text = await page.evaluate('() => document.body.innerText')
-            print(f"Page text length: {len(page_text)}")
-            print(f"First 500 chars: {page_text[:500] if page_text else 'No text found'}")
-            
-            # Try a simpler approach - look for any tables
-            tables_data = await page.evaluate('''
-                () => {
-                    const tables = document.querySelectorAll('table');
-                    return {
-                        tableCount: tables.length,
-                        firstTableText: tables[0]?.innerText?.substring(0, 500) || 'No table found'
-                    };
-                }
-            ''')
-            print(f"Tables found: {tables_data}")
-            
-            # If there are tables, let's parse them similar to the umpire scraper
-            if tables_data['tableCount'] > 0:
-                # Try to get lineup data from tables
-                lineups = await page.evaluate('''
-                    () => {
-                        const games = [];
-                        const tables = document.querySelectorAll('table');
-                        
-                        // Process each table
-                        tables.forEach((table, tableIndex) => {
-                            const rows = Array.from(table.querySelectorAll('tbody tr'));
-                            
-                            // For now, let's just capture the raw data
-                            const tableData = rows.map(row => {
-                                const cells = Array.from(row.querySelectorAll('td'));
-                                return cells.map(cell => cell.textContent.trim());
-                            });
-                            
-                            if (tableData.length > 0) {
-                                games.push({
-                                    tableIndex: tableIndex,
-                                    rawData: tableData.slice(0, 5) // First 5 rows for debugging
-                                });
-                            }
-                        });
-                        
-                        return games;
-                    }
-                ''')
-                
-                await browser.close()
-                return lineups
-            else:
-                # Original text-based parsing
-                lineups = await page.evaluate('''
-                    () => {
-                        const games = [];
-                        const content = document.body.innerText;
-                        
-                        // Split by game times to separate games
-                        const gameBlocks = content.split(/(?=Friday \\d+\\/\\d+ \\d+:\\d+ [AP]M ET)/);
-                        
-                        gameBlocks.forEach(block => {
-                            if (!block.trim() || !block.includes(' @ ')) return;
-                            
-                            const lines = block.split('\\n').map(line => line.trim()).filter(line => line);
-                            
-                            // Find teams - look for the @ symbol
-                            const teamLineIndex = lines.findIndex(line => line.includes(' @ '));
-                            if (teamLineIndex === -1) return;
-                            
-                            const teamLine = lines[teamLineIndex];
-                            const teams = teamLine.split(' @ ').map(t => t.trim());
-                            if (teams.length !== 2) return;
-                            
-                            const game = {
-                                teams: {
-                                    away: teams[0],
-                                    home: teams[1]
-                                },
-                                starters: {},
-                                lineups: {
-                                    away: [],
-                                    home: []
-                                }
-                            };
-                            
-                            // Find pitchers - they appear after team names with (R) or (L)
-                            let pitcherIndex = teamLineIndex + 1;
-                            if (lines[pitcherIndex] && lines[pitcherIndex].includes('(') && lines[pitcherIndex].includes(')')) {
-                                // Away pitcher
-                                const awayPitcherMatch = lines[pitcherIndex].match(/([^(]+)\\s*\\([RL]\\)/);
-                                if (awayPitcherMatch) {
-                                    game.starters.away = awayPitcherMatch[1].trim();
-                                }
-                                
-                                // Home pitcher - check next lines
-                                for (let i = pitcherIndex + 1; i < pitcherIndex + 4; i++) {
-                                    if (lines[i] && lines[i].includes('(') && !lines[i].includes(',')) {
-                                        const homePitcherMatch = lines[i].match(/([^(]+)\\s*\\([RL]\\)/);
-                                        if (homePitcherMatch) {
-                                            game.starters.home = homePitcherMatch[1].trim();
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                            
-                            // Find lineups - look for "Official Lineup" or "Projected Lineup"
-                            let currentTeam = 'away';
-                            let inLineup = false;
-                            let batterOrder = 1;
-                            
-                            for (let i = teamLineIndex; i < lines.length; i++) {
-                                const line = lines[i];
-                                
-                                if (line.includes('Official Lineup') || line.includes('Projected Lineup')) {
-                                    inLineup = true;
-                                    batterOrder = 1;
-                                    continue;
-                                }
-                                
-                                // Check if we've moved to home team lineup
-                                if (inLineup && currentTeam === 'away' && 
-                                    (line.match(/^[A-Z]{2,3}\\s+\\([LRS]\\)/) || 
-                                     (game.lineups.away.length >= 9 && line.match(/[A-Z][a-z]/))
-                                    )) {
-                                    currentTeam = 'home';
-                                    batterOrder = 1;
-                                }
-                                
-                                // Parse lineup entries
-                                // Away team format: "1   Player Name (L) POS"
-                                // Home team format: "POS (L) Player Name   1"
-                                
-                                if (inLineup && line.match(/\\d/) && line.match(/\\([LRS]\\)/)) {
-                                    let name, position;
-                                    
-                                    if (currentTeam === 'away') {
-                                        // Format: "1   J.P. Crawford (L) SS"
-                                        const match = line.match(/\\d+\\s+([^(]+)\\s*\\([LRS]\\)\\s*(\\w+)/);
-                                        if (match) {
-                                            name = match[1].trim();
-                                            position = match[2];
-                                        }
-                                    } else {
-                                        // Format: "LF (S) Ian Happ   1"
-                                        const match = line.match(/(\\w+)\\s*\\([LRS]\\)\\s*([^\\d]+)\\s*\\d+/);
-                                        if (match) {
-                                            position = match[1];
-                                            name = match[2].trim();
-                                        }
-                                    }
-                                    
-                                    if (name && position) {
-                                        game.lineups[currentTeam].push({
-                                            name: name,
-                                            position: position,
-                                            order: batterOrder++
-                                        });
-                                    }
-                                }
-                                
-                                // Stop if we hit weather or betting lines
-                                if (line.includes('°') || line.includes('MLRun') || line.includes('Current Lines')) {
-                                    break;
-                                }
-                            }
-                            
-                            games.push(game);
-                        });
-                        
-                        return games;
-                    }
-                ''')
-                
-                await browser.close()
-                return lineups
             
         except Exception as e:
             await browser.close()
