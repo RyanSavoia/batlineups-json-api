@@ -25,25 +25,20 @@ async def get_lineup_data():
         await page.goto("https://swishanalytics.com/optimus/mlb/lineups", timeout=60000)
         await page.wait_for_timeout(5000)  # Let page fully load
         
-        # Get the page content as text
+        # Just get everything after "MLB Lineups"
         data = await page.evaluate('''
             () => {
                 const content = document.body.innerText;
-                
-                // Return debug info to see what we're getting
-                return {
-                    contentLength: content.length,
-                    first500Chars: content.substring(0, 500),
-                    hasAtSymbol: content.includes('@'),
-                    lineCount: content.split('\\n').length,
-                    // Try to find any line with @
-                    atLines: content.split('\\n').filter(line => line.includes('@')).slice(0, 5)
-                };
+                const startIndex = content.indexOf('MLB Lineups');
+                if (startIndex !== -1) {
+                    return content.substring(startIndex);
+                }
+                return "MLB Lineups not found in content";
             }
         ''')
         
         await browser.close()
-        return data
+        return {"content": data}
 
 @app.get("/health")
 async def health_check():
