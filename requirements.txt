@@ -4,4 +4,3 @@ playwright==1.39.0
 python-multipart==0.0.6
 httpx==0.25.2
 typing-extensions==4.8.0
-greenlet==2.0.2
