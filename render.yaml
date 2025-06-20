@@ -3,9 +3,7 @@ services:
     name: mlb-matchup-analysis-api
     runtime: python
     plan: free
-    buildCommand: |
-      pip install -r requirements.txt
-      python startup.py
+    buildCommand: pip install -r requirements.txt
     startCommand: python startup.py
     envVars:
       - key: PLAYWRIGHT_BROWSERS_PATH
@@ -13,4 +11,4 @@ services:
       - key: PORT
         value: 10000
       - key: PYTHON_VERSION
-        value: 3.11.0
+        value: 3.9.12
